@@ -1,3 +1,54 @@
+<script module lang="ts">
+    export type ValueMode = 'item' | 'id';
+
+    /** Shape primitive items (strings, numbers…) take once the component converts them. */
+    export interface ConvertedItem<Item> {
+        index: number;
+        value: Item;
+        label: string;
+    }
+
+    /** An item as the component sees it — objects pass through, primitives are converted. */
+    export type ObjectItem<Item> = Item extends object ? Item : ConvertedItem<Item>;
+
+    /** Fields the component adds to items while grouping. */
+    export interface ListItemMeta {
+        groupHeader?: boolean;
+        groupItem?: boolean;
+        selectable?: boolean;
+        id?: string;
+    }
+
+    /** An item in the filtered list, including anything grouping added to it. */
+    export type ListItem<Item> = ObjectItem<Item> & ListItemMeta;
+
+    /** Keys of `Item` that can name an id or a label. */
+    export type ItemKey<Item> = keyof ObjectItem<Item> & string;
+
+    /**
+     * `Preferred` when `Item` has it, every key otherwise, so `itemId`/`label` can default to
+     * `'value'`/`'label'` without demanding those keys of items that name their fields differently.
+     */
+    export type DefaultItemKey<Item, Preferred extends string> = [Extract<ItemKey<Item>, Preferred>] extends [never]
+        ? ItemKey<Item>
+        : Extract<ItemKey<Item>, Preferred>;
+
+    /** A single selection: the item itself, or its id under `valueMode="id"`. */
+    export type Selection<Item, ItemId extends ItemKey<Item>, Mode extends ValueMode> = Item extends object
+        ? Mode extends 'id'
+            ? ObjectItem<Item>[ItemId]
+            : Item
+        : Item;
+
+    /** What `bind:value` holds — an array of selections when `multiple`. */
+    export type SelectValue<
+        Item,
+        ItemId extends ItemKey<Item>,
+        Mode extends ValueMode,
+        Multiple extends boolean,
+    > = Multiple extends true ? Selection<Item, ItemId, Mode>[] : Selection<Item, ItemId, Mode>;
+</script>
+
 <script
     lang="ts"
     generics="Item = any, ItemId extends ItemKey<Item> = DefaultItemKey<Item, 'value'>, Label extends ItemKey<Item> = DefaultItemKey<Item, 'label'>, Mode extends ValueMode = 'item', Multiple extends boolean = false">
@@ -14,36 +65,26 @@
     import ClearIcon from './ClearIcon.svelte';
     import LoadingIcon from './LoadingIcon.svelte';
 
-    import type {
-        DefaultItemKey,
-        Filter,
-        GetItems,
-        ItemFilter,
-        ItemKey,
-        ListItem,
-        LoadOptions,
-        SelectError,
-        Selection,
-        SelectValue,
-        ValueMode,
-    } from './types';
-
-    type SelectItem = Record<string, unknown>;
-    // The type parameters are inferred from `items`, `loadOptions`, `itemId`, `label`, `valueMode`
-    // and `multiple` alone — NoInfer stops a bound `value` or an annotated callback from inferring
-    // them back the other way.
-    type ListedItem = NoInfer<ListItem<Item>>;
+    // NoInfer: the type parameters come from `items`, `loadOptions`, `itemId`, `label`, `valueMode`
+    // and `multiple`; a bound `value` or an annotated callback must not infer them the other way.
+    type SelectItem = NoInfer<ListItem<Item>>;
     type SelectedValue = NoInfer<Selection<Item, ItemId, Mode>>;
-    type BoundValue = NoInfer<SelectValue<Item, ItemId, Mode, Multiple>>;
+    type BoundValue = NoInfer<SelectValue<Item, ItemId, Mode, Multiple>> | undefined;
     type InputAttributes = Record<string, string | number | boolean | undefined>;
     type ScrollActionParameters = { scroll: boolean; listDom?: boolean };
 
+    type LoadOptionsFn = (filterText: string) => Promise<Item[] | { cancelled: true } | null | undefined>;
+
+    type ItemFilterFn = (label: unknown, filterText: string, option: SelectItem) => boolean;
+    type GroupByFn = (item: SelectItem) => string | undefined;
+    type GroupFilterFn = (groups: string[]) => string[];
+    type CreateGroupHeaderItemFn = (groupValue: string, item: SelectItem) => Record<string, unknown>;
     type DebounceFn = (fn: () => void, wait?: number) => void;
 
     interface Props {
         valueMode?: Mode;
-        filter?: Filter<Item, ItemId, Label, Mode, Multiple>;
-        getItems?: GetItems<Item>;
+        filter?: typeof _filter;
+        getItems?: typeof _getItems;
         id?: string | null;
         name?: string | null;
         container?: HTMLDivElement | null;
@@ -58,19 +99,19 @@
         placeholderAlwaysShow?: boolean;
         items?: Item[] | null;
         label?: Label;
-        itemFilter?: ItemFilter<Item, Label>;
-        groupBy?: (item: ListedItem) => string | undefined;
-        groupFilter?: (groups: string[]) => string[];
+        itemFilter?: ItemFilterFn;
+        groupBy?: GroupByFn;
+        groupFilter?: GroupFilterFn;
         groupHeaderSelectable?: boolean;
         itemId?: ItemId;
-        loadOptions?: LoadOptions<Item>;
+        loadOptions?: LoadOptionsFn;
         containerStyles?: string;
         hasError?: boolean;
         filterSelectedItems?: boolean;
         required?: boolean;
         closeListOnChange?: boolean;
         clearFilterTextOnBlur?: boolean;
-        createGroupHeaderItem?: (groupValue: string, item: ListedItem) => SelectItem;
+        createGroupHeaderItem?: CreateGroupHeaderItemFn;
         searchable?: boolean;
         inputStyles?: string;
         clearable?: boolean;
@@ -89,19 +130,19 @@
         ariaValues?: (values: unknown) => string;
         ariaListOpen?: (label: unknown, count: number) => string;
         ariaFocused?: () => string;
-        oninput?: (value: BoundValue | undefined) => void;
-        onchange?: (value: BoundValue | undefined) => void;
-        onselect?: (selection: ListedItem) => void;
-        onclear?: (value: BoundValue | SelectedValue | undefined) => void;
-        onfilter?: (filteredItems: ListedItem[]) => void;
+        oninput?: (value: BoundValue) => void;
+        onchange?: (value: BoundValue) => void;
+        onselect?: (selection: SelectItem) => void;
+        onclear?: (value: BoundValue | SelectedValue) => void;
+        onfilter?: (filteredItems: SelectItem[]) => void;
         onhoverItem?: (hoverItemIndex: number) => void;
         onfocus?: (event: FocusEvent) => void;
         onblur?: (event: FocusEvent) => void;
-        onerror?: (error: SelectError) => void;
-        onloaded?: (event: { items: ListedItem[] }) => void;
+        onerror?: (error: { type: string; details: unknown }) => void;
+        onloaded?: (event: { items: SelectItem[] }) => void;
         listPrepend?: Snippet;
-        list?: Snippet<[{ filteredItems: ListedItem[] }]>;
-        item?: Snippet<[{ item: ListedItem; index: number }]>;
+        list?: Snippet<[{ filteredItems: SelectItem[] }]>;
+        item?: Snippet<[{ item: SelectItem; index: number }]>;
         empty?: Snippet;
         listAppend?: Snippet;
         prepend?: Snippet;
@@ -110,17 +151,14 @@
         loadingIcon?: Snippet;
         clearIcon?: Snippet;
         chevronIcon?: Snippet<[{ listOpen: boolean }]>;
-        inputHidden?: Snippet<[{ value: BoundValue | undefined }]>;
-        requiredIndicator?: Snippet<[{ value: BoundValue | undefined }]>;
+        inputHidden?: Snippet<[{ value: BoundValue }]>;
+        requiredIndicator?: Snippet<[{ value: BoundValue }]>;
     }
 
     let timeout: ReturnType<typeof setTimeout> | undefined;
 
-    /**
-     * Runtime default for a prop whose type is a type parameter. TypeScript can't check a literal
-     * like `'value'` against an `ItemId` the caller picks, so these defaults are applied without a
-     * claim about their type.
-     */
+    // Runtime default for a prop whose type is a type parameter: TypeScript can't check `'value'`
+    // against an `ItemId` the caller picks, so the default is applied without a claim about its type.
     function untypedDefault(value: unknown): any {
         return value;
     }
@@ -141,7 +179,7 @@
         filterText = $bindable(''),
         placeholder = 'Please select',
         placeholderAlwaysShow = false,
-        items = $bindable<Item[] | null>([]),
+        items = $bindable<Item[]>([]),
         label = untypedDefault('label'),
         itemFilter = (label, filterText, option) => `${label}`.toLowerCase().includes(filterText.toLowerCase()),
         groupBy = undefined,
@@ -217,17 +255,11 @@
         return filteredItems;
     }
 
-    /**
-     * `value` and `items` are generic to callers but shape-agnostic inside: selections move
-     * between items, ids and arrays of either. These three are the only places the generics are
-     * erased, so the rest of the component stays cast-free.
-     */
+    // `value` and `items` are generic to callers but shape-agnostic inside: selections move between
+    // items, ids and arrays of either. Writes to `value` and lookups in `items` go through here so
+    // the generics are erased in one place rather than cast at every site.
     function setValue(next: any) {
         value = next;
-    }
-
-    function setItems(next: any) {
-        items = next;
     }
 
     function itemList(): any[] {
@@ -235,7 +267,7 @@
     }
 
     let activeValue = $state<number | undefined>(undefined);
-    let prev_value: any;
+    let prev_value: BoundValue;
     let prev_filterText: string | undefined;
     let prev_multiple: boolean | undefined;
     let prev_focused: boolean | undefined;
@@ -285,7 +317,7 @@
     // Primitive item arrays (e.g. string[]) use id-shaped values even when valueMode is the default 'item'.
     const useIdValue = $derived(valueMode === 'id' || isPrimitiveItems(items));
 
-    function toSelectionValue(selection: ListedItem) {
+    function toSelectionValue(selection: SelectItem) {
         return useIdValue ? getValue(selection) : selection;
     }
 
@@ -305,8 +337,7 @@
         return JSON.stringify(value);
     }
 
-    // Returns `any[]` so the converted primitives can stand in for generic items.
-    function convertStringItemsToObjects(_items: unknown[]): any[] {
+    function convertStringItemsToObjects(_items: unknown[]) {
         return _items.map((item, index) => {
             return {
                 index,
@@ -316,11 +347,11 @@
         });
     }
 
-    function filterGroupedItems(_items: any[]): any[] {
+    function filterGroupedItems(_items: SelectItem[]): SelectItem[] {
         if (!groupBy) return _items;
 
         const groupValues: string[] = [];
-        const groups: Record<string, SelectItem[]> = {};
+        const groups: Record<string, any[]> = {};
 
         _items.forEach((item) => {
             const groupValue = groupBy(item) ?? '';
@@ -386,7 +417,7 @@
     }
 
     function setValueIndexAsHoverIndex() {
-        const valueIndex = filteredItems.findIndex((i) => {
+        const valueIndex = filteredItems.findIndex((i: SelectItem) => {
             return i[itemId] === getValue(value);
         });
 
@@ -419,7 +450,7 @@
                     loading = res.loading;
                     listOpen = listOpen ? res.listOpen : filterText.length > 0 ? true : false;
                     focused = listOpen && res.focused;
-                    setItems(groupBy ? filterGroupedItems(res.filteredItems) : res.filteredItems);
+                    items = groupBy ? filterGroupedItems(res.filteredItems) : res.filteredItems;
                 } else {
                     loading = false;
                     focused = true;
@@ -439,7 +470,7 @@
     // Shape-erased views of `value` for the markup, which renders selections without knowing
     // whether they are items or ids.
     const selectedItems = $derived<any[]>(Array.isArray(value) ? value : []);
-    const selectedValue = $derived<any>(value);
+    const singleSelection = $derived<any>(value);
     const hideSelectedItem = $derived(hasValue && filterText.length > 0);
     const showClear = $derived(hasValue && clearable && !disabled && !loading);
     const placeholderText = $derived(
@@ -451,7 +482,7 @@
                 ? ''
                 : placeholder,
     );
-    const filteredItems = $derived(
+    const filteredItems: SelectItem[] = $derived(
         filter({
             loadOptions,
             filterText,
@@ -591,9 +622,9 @@
         let noDuplicates = true;
         if (value && Array.isArray(value)) {
             const ids: unknown[] = [];
-            const uniqueValues: unknown[] = [];
+            const uniqueValues: SelectItem[] = [];
 
-            value.forEach((val) => {
+            value.forEach((val: SelectItem) => {
                 if (!ids.includes(getValue(val))) {
                     ids.push(getValue(val));
                     uniqueValues.push(val);
@@ -607,12 +638,12 @@
         return noDuplicates;
     }
 
-    function findItem(selection?: unknown) {
+    function findItem(selection?: SelectItem) {
         let matchTo = selection ? getValue(selection) : getValue(value);
         return itemList().find((item) => item[itemId] === matchTo);
     }
 
-    function updateValueDisplay(currentItems: Item[] | null | undefined) {
+    function updateValueDisplay(currentItems: Item[] | null) {
         if (valueMode !== 'item') return;
         if (!currentItems || currentItems.length === 0 || currentItems.some((item) => typeof item !== 'object')) return;
         if (
@@ -640,11 +671,7 @@
         if (value.length === 1) {
             value = undefined;
         } else {
-            setValue(
-                value.filter((item) => {
-                    return item !== itemToRemove;
-                }),
-            );
+            setValue(value.filter((item) => item !== itemToRemove));
         }
 
         onclear?.(itemToRemove);
@@ -775,14 +802,16 @@
         if (focused && input) input.focus();
     });
 
-    function itemSelected(selection: ListedItem) {
+    function itemSelected(selection: SelectItem) {
         if (selection) {
             filterText = '';
             const item = Object.assign({}, selection);
 
             if (item.groupHeader && !item.selectable) return;
-            const selected = toSelectionValue(selection);
-            setValue(multiple ? (Array.isArray(value) ? value.concat([selected]) : [selected]) : selected);
+            const selectedValue = toSelectionValue(selection);
+            setValue(
+                multiple ? (Array.isArray(value) ? value.concat([selectedValue]) : [selectedValue]) : selectedValue,
+            );
 
             setTimeout(() => {
                 if (closeListOnChange) closeList();
@@ -816,7 +845,7 @@
 
     let isScrolling = false;
 
-    function handleSelect(item: ListedItem) {
+    function handleSelect(item: SelectItem) {
         if (!item || item.selectable === false) return;
         itemSelected(item);
     }
@@ -826,7 +855,7 @@
         hoverItemIndex = i;
     }
 
-    function handleItemClick(args: { item: ListedItem; i: number }) {
+    function handleItemClick(args: { item: SelectItem; i: number }) {
         const { item, i } = args;
         if (item?.selectable === false) return;
         if (value && !multiple && getValue(value) === item[itemId]) return closeList();
@@ -838,7 +867,7 @@
 
     function setHoverIndex(increment: number) {
         let selectableFilteredItems = filteredItems.filter(
-            (item) => !Object.hasOwn(item, 'selectable') || item.selectable === true,
+            (item: SelectItem) => !Object.hasOwn(item, 'selectable') || item.selectable === true,
         );
 
         if (selectableFilteredItems.length === 0) {
@@ -861,7 +890,7 @@
         }
     }
 
-    function isItemActive(item: ListedItem, currentValue: any, currentItemId: ItemId) {
+    function isItemActive(item: SelectItem, currentValue: any, currentItemId: ItemId) {
         if (multiple) return;
         return currentValue && getValue(currentValue) === item[currentItemId];
     }
@@ -870,7 +899,7 @@
         return itemIndex === 0;
     }
 
-    function isItemSelectable(item: ListedItem) {
+    function isItemSelectable(item: SelectItem) {
         return (item.groupHeader && item.selectable) || item.selectable || !item.hasOwnProperty('selectable');
     }
 
@@ -1051,7 +1080,7 @@
                 {/each}
             {:else}
                 <div class="selected-item" class:hide-selected-item={hideSelectedItem}>
-                    {#if selection}{@render selection({ selection: selectedValue })}
+                    {#if selection}{@render selection({ selection: singleSelection })}
                     {:else}
                         {getLabel(value)}
                     {/if}

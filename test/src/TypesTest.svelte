@@ -4,8 +4,7 @@
 -->
 <script lang="ts">
     import type { ComponentProps } from 'svelte';
-    import Select from '../../src/lib/Select.svelte';
-    import type { ItemKey, ListItem, SelectValue } from '../../src/lib/types';
+    import Select, { type ItemKey, type ListItem, type SelectValue } from '../../src/lib/Select.svelte';
 
     type Product = { id: number; title: string; group?: string };
 

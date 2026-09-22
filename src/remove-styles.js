@@ -25,7 +25,6 @@ readdirSync(SOURCE_FOLDER, { withFileTypes: true })
         if (fileName === 'Select.svelte') {
             output = output.replace('./filter', '../filter');
             output = output.replace('./get-items', '../get-items');
-            output = output.replace('./types', '../types');
         }
 
         writeFileSync(path.join(TARGET_FOLDER, fileName), output);
