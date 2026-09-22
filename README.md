@@ -44,11 +44,11 @@ List position and floating is powered by `floating-ui`, see their [package-entry
 
 | Prop                   | Type      | Default         | Description                                                    |
 | ---------------------- | --------- | --------------- | -------------------------------------------------------------- |
-| items                  | `any[]`   | `[]`            | Array of items available to display / filter                   |
-| value                  | `any`     | `undefined`     | Selected value(s). Shape depends on `valueMode` — see below.   |
+| items                  | `Item[]`  | `[]`            | Array of items available to display / filter                   |
+| value                  | see below | `undefined`     | Selected value(s). Shape depends on `valueMode` — see below.   |
 | valueMode              | `string`  | `item`          | `item`: full item object(s). `id`: primitive id(s) via `itemId`. String/primitive `items` keep primitive `value` without setting `id`. |
-| itemId                 | `string`  | `value`         | Override default identifier                                    |
-| label                  | `string`  | `label`         | Override default label                                         |
+| itemId                 | `keyof Item` | `value`      | Override default identifier                                    |
+| label                  | `keyof Item` | `label`      | Override default label                                         |
 | id                     | `string`  | `null`          | id attr for input field                                        |
 | filterText             | `string`  | `''`            | Text to filter `items` by                                      |
 | placeholder            | `string`  | `Please select` | Placeholder text                                               |
@@ -296,6 +296,39 @@ handleClear();
 `loadOptions` must return a `Promise` that resolves with a list of items. Return `{ cancelled: true }` to keep the loading state active.
 
 Core replaceable helpers live in [`get-items.js`](/src/lib/get-items.js) and [`filter.js`](/src/lib/filter.js).
+
+## TypeScript
+
+`Select` is generic over the item type. `items` drives the inference; `value`, `itemId`, `label`, the snippets and the callbacks all follow from it.
+
+```svelte
+<script lang="ts">
+  import Select from 'svelte-select';
+
+  type Product = { id: number; title: string };
+
+  const items: Product[] = [
+    { id: 1, title: 'One' },
+    { id: 2, title: 'Two' },
+  ];
+
+  let value = $state<Product>();
+</script>
+
+<Select {items} itemId="id" label="title" bind:value />
+```
+
+`itemId` and `label` only accept keys of the item, so a typo fails the build. `value` follows `valueMode` and `multiple`: `Product` above, `number` with `valueMode="id"`, an array of either with `multiple`.
+
+Primitive items infer too — `items={['one', 'two']}` binds a `string` value.
+
+The item and value types are exported for annotating your own handlers:
+
+```ts
+import type { ListItem, SelectValue } from 'svelte-select';
+```
+
+`ListItem<Item>` is an item as the list sees it: your own item, or the `{ index, value, label }` object the component builds from a primitive, plus the fields grouping adds.
 
 ## A11y (Accessibility)
 

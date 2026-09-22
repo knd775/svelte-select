@@ -1,4 +1,6 @@
-<script lang="ts">
+<script
+    lang="ts"
+    generics="Item = any, ItemId extends ItemKey<Item> = DefaultItemKey<Item, 'value'>, Label extends ItemKey<Item> = DefaultItemKey<Item, 'label'>, Mode extends ValueMode = 'item', Multiple extends boolean = false">
     import { onDestroy, onMount, untrack } from 'svelte';
     import type { Action } from 'svelte/action';
     import type { Snippet } from 'svelte';
@@ -12,54 +14,63 @@
     import ClearIcon from './ClearIcon.svelte';
     import LoadingIcon from './LoadingIcon.svelte';
 
-    type SelectItem = Record<string, unknown>;
-    type SelectValue = any;
+    import type {
+        DefaultItemKey,
+        Filter,
+        GetItems,
+        ItemFilter,
+        ItemKey,
+        ListItem,
+        LoadOptions,
+        SelectError,
+        Selection,
+        SelectValue,
+        ValueMode,
+    } from './types';
+
+    type SelectItem = Record<string, any>;
+    // The type parameters are inferred from `items`, `loadOptions`, `itemId`, `label`, `valueMode`
+    // and `multiple` alone — NoInfer stops a bound `value` or an annotated callback from inferring
+    // them back the other way.
+    type ListedItem = NoInfer<ListItem<Item>>;
+    type SelectedValue = NoInfer<Selection<Item, ItemId, Mode>>;
+    type BoundValue = NoInfer<SelectValue<Item, ItemId, Mode, Multiple>>;
     type InputAttributes = Record<string, string | number | boolean | undefined>;
     type ScrollActionParameters = { scroll: boolean; listDom?: boolean };
 
-    type LoadOptionsFn = (
-        filterText: string,
-    ) => Promise<SelectItem[] | string[] | { cancelled: true } | null | undefined>;
-
-    type ItemFilterFn = (label: unknown, filterText: string, option: SelectItem) => boolean;
-    type GroupByFn = (item: SelectItem) => string | undefined;
-    type GroupFilterFn = (groups: string[]) => string[];
-    type CreateGroupHeaderItemFn = (groupValue: string, item: SelectItem) => SelectItem;
     type DebounceFn = (fn: () => void, wait?: number) => void;
 
-    type ValueMode = 'item' | 'id';
-
     interface Props {
-        valueMode?: ValueMode;
-        filter?: typeof _filter;
-        getItems?: typeof _getItems;
+        valueMode?: Mode;
+        filter?: Filter<Item, ItemId, Label, Mode, Multiple>;
+        getItems?: GetItems<Item>;
         id?: string | null;
         name?: string | null;
         container?: HTMLDivElement | null;
         input?: HTMLInputElement | null;
-        multiple?: boolean;
+        multiple?: Multiple;
         multiFullItemClearable?: boolean;
         disabled?: boolean;
         focused?: boolean;
-        value?: SelectValue;
+        value?: BoundValue;
         filterText?: string;
         placeholder?: string;
         placeholderAlwaysShow?: boolean;
-        items?: SelectItem[] | null;
-        label?: string;
-        itemFilter?: ItemFilterFn;
-        groupBy?: GroupByFn;
-        groupFilter?: GroupFilterFn;
+        items?: Item[] | null;
+        label?: Label;
+        itemFilter?: ItemFilter<Item, Label>;
+        groupBy?: (item: ListedItem) => string | undefined;
+        groupFilter?: (groups: string[]) => string[];
         groupHeaderSelectable?: boolean;
-        itemId?: string;
-        loadOptions?: LoadOptionsFn;
+        itemId?: ItemId;
+        loadOptions?: LoadOptions<Item>;
         containerStyles?: string;
         hasError?: boolean;
         filterSelectedItems?: boolean;
         required?: boolean;
         closeListOnChange?: boolean;
         clearFilterTextOnBlur?: boolean;
-        createGroupHeaderItem?: CreateGroupHeaderItemFn;
+        createGroupHeaderItem?: (groupValue: string, item: ListedItem) => SelectItem;
         searchable?: boolean;
         inputStyles?: string;
         clearable?: boolean;
@@ -78,56 +89,65 @@
         ariaValues?: (values: unknown) => string;
         ariaListOpen?: (label: unknown, count: number) => string;
         ariaFocused?: () => string;
-        oninput?: (value: SelectValue) => void;
-        onchange?: (value: SelectValue) => void;
-        onselect?: (selection: SelectItem) => void;
-        onclear?: (value: SelectValue | SelectItem) => void;
-        onfilter?: (filteredItems: SelectItem[]) => void;
+        oninput?: (value: BoundValue | undefined) => void;
+        onchange?: (value: BoundValue | undefined) => void;
+        onselect?: (selection: ListedItem) => void;
+        onclear?: (value: BoundValue | SelectedValue | undefined) => void;
+        onfilter?: (filteredItems: ListedItem[]) => void;
         onhoverItem?: (hoverItemIndex: number) => void;
         onfocus?: (event: FocusEvent) => void;
         onblur?: (event: FocusEvent) => void;
-        onerror?: (error: { type: string; details: unknown }) => void;
-        onloaded?: (event: { items: SelectItem[] }) => void;
+        onerror?: (error: SelectError) => void;
+        onloaded?: (event: { items: ListedItem[] }) => void;
         listPrepend?: Snippet;
-        list?: Snippet<[{ filteredItems: SelectItem[] }]>;
-        item?: Snippet<[{ item: SelectItem; index: number }]>;
+        list?: Snippet<[{ filteredItems: ListedItem[] }]>;
+        item?: Snippet<[{ item: ListedItem; index: number }]>;
         empty?: Snippet;
         listAppend?: Snippet;
         prepend?: Snippet;
-        selection?: Snippet<[{ selection: SelectValue; index?: number }]>;
+        selection?: Snippet<[{ selection: SelectedValue; index?: number }]>;
         multiClearIcon?: Snippet;
         loadingIcon?: Snippet;
         clearIcon?: Snippet;
         chevronIcon?: Snippet<[{ listOpen: boolean }]>;
-        inputHidden?: Snippet<[{ value: SelectValue }]>;
-        requiredIndicator?: Snippet<[{ value: SelectValue }]>;
+        inputHidden?: Snippet<[{ value: BoundValue | undefined }]>;
+        requiredIndicator?: Snippet<[{ value: BoundValue | undefined }]>;
     }
 
     let timeout: ReturnType<typeof setTimeout> | undefined;
 
+    /**
+     * Runtime default for a prop whose type is a type parameter. TypeScript can't check a literal
+     * like `'value'` against an `ItemId` the caller picks, so these defaults are applied without a
+     * claim about their type.
+     */
+    function untypedDefault(value: unknown): any {
+        return value;
+    }
+
     let {
-        valueMode = 'item',
+        valueMode = untypedDefault('item'),
         filter = _filter,
         getItems = _getItems,
         id = null,
         name = null,
         container = $bindable<HTMLDivElement | null>(null),
         input = $bindable<HTMLInputElement | null>(null),
-        multiple = false,
+        multiple = untypedDefault(false),
         multiFullItemClearable = false,
         disabled = false,
         focused = $bindable(false),
-        value = $bindable<any>(),
+        value = $bindable(),
         filterText = $bindable(''),
         placeholder = 'Please select',
         placeholderAlwaysShow = false,
-        items = $bindable<SelectItem[]>([]),
-        label = 'label',
+        items = $bindable<Item[] | null>([]),
+        label = untypedDefault('label'),
         itemFilter = (label, filterText, option) => `${label}`.toLowerCase().includes(filterText.toLowerCase()),
         groupBy = undefined,
         groupFilter = (groups) => groups,
         groupHeaderSelectable = false,
-        itemId = 'value',
+        itemId = untypedDefault('value'),
         loadOptions = undefined,
         containerStyles = '',
         hasError = false,
@@ -197,8 +217,25 @@
         return filteredItems;
     }
 
+    /**
+     * `value` and `items` are generic to callers but shape-agnostic inside: selections move
+     * between items, ids and arrays of either. These three are the only places the generics are
+     * erased, so the rest of the component stays cast-free.
+     */
+    function setValue(next: any) {
+        value = next;
+    }
+
+    function setItems(next: any) {
+        items = next;
+    }
+
+    function itemList(): any[] {
+        return items ?? [];
+    }
+
     let activeValue = $state<number | undefined>(undefined);
-    let prev_value: SelectValue;
+    let prev_value: any;
     let prev_filterText: string | undefined;
     let prev_multiple: boolean | undefined;
     let prev_focused: boolean | undefined;
@@ -248,14 +285,14 @@
     // Primitive item arrays (e.g. string[]) use id-shaped values even when valueMode is the default 'item'.
     const useIdValue = $derived(valueMode === 'id' || isPrimitiveItems(items));
 
-    function toSelectionValue(selection: SelectItem) {
+    function toSelectionValue(selection: ListedItem) {
         return useIdValue ? getValue(selection) : selection;
     }
 
     function getLabel(v: any) {
         if (v == null) return v;
         if (typeof v === 'object') return v[label];
-        const item = items?.find((i) => i[itemId] === v);
+        const item = itemList().find((i) => i[itemId] === v);
         return item ? item[label] : v;
     }
 
@@ -268,7 +305,8 @@
         return JSON.stringify(value);
     }
 
-    function convertStringItemsToObjects(_items: unknown[]): SelectItem[] {
+    // Returns `any[]` so the converted primitives can stand in for generic items.
+    function convertStringItemsToObjects(_items: unknown[]): any[] {
         return _items.map((item, index) => {
             return {
                 index,
@@ -278,7 +316,7 @@
         });
     }
 
-    function filterGroupedItems(_items: SelectItem[]): SelectItem[] {
+    function filterGroupedItems(_items: any[]): any[] {
         if (!groupBy) return _items;
 
         const groupValues: string[] = [];
@@ -338,7 +376,7 @@
         prev_multiple = true;
         if (!value) return;
         if (!Array.isArray(value)) {
-            value = [value];
+            setValue([value]);
         }
     }
 
@@ -348,7 +386,7 @@
     }
 
     function setValueIndexAsHoverIndex() {
-        const valueIndex = filteredItems.findIndex((i: SelectItem) => {
+        const valueIndex = filteredItems.findIndex((i) => {
             return i[itemId] === getValue(value);
         });
 
@@ -381,7 +419,7 @@
                     loading = res.loading;
                     listOpen = listOpen ? res.listOpen : filterText.length > 0 ? true : false;
                     focused = listOpen && res.focused;
-                    items = groupBy ? filterGroupedItems(res.filteredItems) : res.filteredItems;
+                    setItems(groupBy ? filterGroupedItems(res.filteredItems) : res.filteredItems);
                 } else {
                     loading = false;
                     focused = true;
@@ -398,6 +436,10 @@
     }
 
     const hasValue = $derived(multiple ? Array.isArray(value) && value.length > 0 : !!value);
+    // Shape-erased views of `value` for the markup, which renders selections without knowing
+    // whether they are items or ids.
+    const selectedItems = $derived<any[]>(Array.isArray(value) ? value : []);
+    const selectedValue = $derived<any>(value);
     const hideSelectedItem = $derived(hasValue && filterText.length > 0);
     const showClear = $derived(hasValue && clearable && !disabled && !loading);
     const placeholderText = $derived(
@@ -429,7 +471,7 @@
     const listDom = $derived(!!listElement);
     const scrollToHoverItem = $derived(hoverItemIndex);
 
-    function handleAriaSelection(_multiple: boolean) {
+    function handleAriaSelection(_multiple: boolean | undefined) {
         let selected: unknown = undefined;
 
         if (_multiple && Array.isArray(value) && value.length > 0) {
@@ -466,7 +508,7 @@
     });
 
     $effect(() => {
-        if (multiple && value && value.length > 1) untrack(checkValueForDuplicates);
+        if (multiple && Array.isArray(value) && value.length > 1) untrack(checkValueForDuplicates);
     });
 
     $effect(() => {
@@ -549,9 +591,9 @@
         let noDuplicates = true;
         if (value && Array.isArray(value)) {
             const ids: unknown[] = [];
-            const uniqueValues: SelectItem[] = [];
+            const uniqueValues: any[] = [];
 
-            value.forEach((val: SelectItem) => {
+            value.forEach((val) => {
                 if (!ids.includes(getValue(val))) {
                     ids.push(getValue(val));
                     uniqueValues.push(val);
@@ -560,17 +602,17 @@
                 }
             });
 
-            if (!noDuplicates) value = uniqueValues;
+            if (!noDuplicates) setValue(uniqueValues);
         }
         return noDuplicates;
     }
 
-    function findItem(selection?: SelectItem) {
+    function findItem(selection?: any) {
         let matchTo = selection ? getValue(selection) : getValue(value);
-        return items?.find((item) => item[itemId] === matchTo);
+        return itemList().find((item) => item[itemId] === matchTo);
     }
 
-    function updateValueDisplay(currentItems: SelectItem[] | null) {
+    function updateValueDisplay(currentItems: Item[] | null | undefined) {
         if (valueMode !== 'item') return;
         if (!currentItems || currentItems.length === 0 || currentItems.some((item) => typeof item !== 'object')) return;
         if (
@@ -583,10 +625,10 @@
 
         if (Array.isArray(value)) {
             const newValue = value.map((selection) => findItem(selection) || selection);
-            if (JSON.stringify(newValue) !== JSON.stringify(value)) value = newValue;
+            if (JSON.stringify(newValue) !== JSON.stringify(value)) setValue(newValue);
         } else {
             const newValue = findItem() || value;
-            if (JSON.stringify(newValue) !== JSON.stringify(value)) value = newValue;
+            if (JSON.stringify(newValue) !== JSON.stringify(value)) setValue(newValue);
         }
     }
 
@@ -598,9 +640,11 @@
         if (value.length === 1) {
             value = undefined;
         } else {
-            value = value.filter((item) => {
-                return item !== itemToRemove;
-            });
+            setValue(
+                value.filter((item) => {
+                    return item !== itemToRemove;
+                }),
+            );
         }
 
         onclear?.(itemToRemove);
@@ -669,7 +713,7 @@
             case 'Backspace':
                 if (!multiple || filterText.length > 0) return;
 
-                if (multiple && value && value.length > 0) {
+                if (Array.isArray(value) && value.length > 0) {
                     handleMultiItemClear(activeValue !== undefined ? activeValue : value.length - 1);
                     if (activeValue === 0 || activeValue === undefined) break;
                     activeValue = value.length > activeValue ? activeValue - 1 : undefined;
@@ -677,7 +721,7 @@
 
                 break;
             case 'ArrowLeft':
-                if (!value || !multiple || filterText.length > 0) return;
+                if (!multiple || !Array.isArray(value) || filterText.length > 0) return;
                 if (activeValue === undefined) {
                     activeValue = value.length - 1;
                 } else if (value.length > activeValue && activeValue !== 0) {
@@ -685,7 +729,7 @@
                 }
                 break;
             case 'ArrowRight':
-                if (!value || !multiple || filterText.length > 0 || activeValue === undefined) return;
+                if (!multiple || !Array.isArray(value) || filterText.length > 0 || activeValue === undefined) return;
                 if (activeValue === value.length - 1) {
                     activeValue = undefined;
                 } else if (activeValue < value.length - 1) {
@@ -731,14 +775,14 @@
         if (focused && input) input.focus();
     });
 
-    function itemSelected(selection: SelectItem) {
+    function itemSelected(selection: ListedItem) {
         if (selection) {
             filterText = '';
             const item = Object.assign({}, selection);
 
             if (item.groupHeader && !item.selectable) return;
-            const selectedValue = toSelectionValue(selection);
-            value = multiple ? (value ? value.concat([selectedValue]) : [selectedValue]) : selectedValue;
+            const selected = toSelectionValue(selection);
+            setValue(multiple ? (Array.isArray(value) ? value.concat([selected]) : [selected]) : selected);
 
             setTimeout(() => {
                 if (closeListOnChange) closeList();
@@ -772,7 +816,7 @@
 
     let isScrolling = false;
 
-    function handleSelect(item: SelectItem) {
+    function handleSelect(item: ListedItem) {
         if (!item || item.selectable === false) return;
         itemSelected(item);
     }
@@ -782,7 +826,7 @@
         hoverItemIndex = i;
     }
 
-    function handleItemClick(args: { item: SelectItem; i: number }) {
+    function handleItemClick(args: { item: ListedItem; i: number }) {
         const { item, i } = args;
         if (item?.selectable === false) return;
         if (value && !multiple && getValue(value) === item[itemId]) return closeList();
@@ -794,7 +838,7 @@
 
     function setHoverIndex(increment: number) {
         let selectableFilteredItems = filteredItems.filter(
-            (item: SelectItem) => !Object.hasOwn(item, 'selectable') || item.selectable === true,
+            (item) => !Object.hasOwn(item, 'selectable') || item.selectable === true,
         );
 
         if (selectableFilteredItems.length === 0) {
@@ -817,7 +861,7 @@
         }
     }
 
-    function isItemActive(item: SelectItem, currentValue: SelectValue, currentItemId: string) {
+    function isItemActive(item: ListedItem, currentValue: any, currentItemId: ItemId) {
         if (multiple) return;
         return currentValue && getValue(currentValue) === item[currentItemId];
     }
@@ -826,7 +870,7 @@
         return itemIndex === 0;
     }
 
-    function isItemSelectable(item: SelectItem) {
+    function isItemSelectable(item: ListedItem) {
         return (item.groupHeader && item.selectable) || item.selectable || !item.hasOwnProperty('selectable');
     }
 
@@ -971,7 +1015,7 @@
     <div class="value-container">
         {#if hasValue}
             {#if multiple}
-                {#each value as item, i}
+                {#each selectedItems as item, i}
                     <div
                         class="multi-item"
                         class:active={activeValue === i}
@@ -1007,7 +1051,7 @@
                 {/each}
             {:else}
                 <div class="selected-item" class:hide-selected-item={hideSelectedItem}>
-                    {#if selection}{@render selection({ selection: value })}
+                    {#if selection}{@render selection({ selection: selectedValue })}
                     {:else}
                         {getLabel(value)}
                     {/if}
