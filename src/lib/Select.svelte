@@ -28,7 +28,7 @@
         ValueMode,
     } from './types';
 
-    type SelectItem = Record<string, any>;
+    type SelectItem = Record<string, unknown>;
     // The type parameters are inferred from `items`, `loadOptions`, `itemId`, `label`, `valueMode`
     // and `multiple` alone — NoInfer stops a bound `value` or an annotated callback from inferring
     // them back the other way.
@@ -591,7 +591,7 @@
         let noDuplicates = true;
         if (value && Array.isArray(value)) {
             const ids: unknown[] = [];
-            const uniqueValues: any[] = [];
+            const uniqueValues: unknown[] = [];
 
             value.forEach((val) => {
                 if (!ids.includes(getValue(val))) {
@@ -607,7 +607,7 @@
         return noDuplicates;
     }
 
-    function findItem(selection?: any) {
+    function findItem(selection?: unknown) {
         let matchTo = selection ? getValue(selection) : getValue(value);
         return itemList().find((item) => item[itemId] === matchTo);
     }
